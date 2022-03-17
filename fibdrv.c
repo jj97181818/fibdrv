@@ -59,6 +59,34 @@ static ssize_t fib_read(struct file *file,
                         size_t size,
                         loff_t *offset)
 {
+    char fib[64];
+    long long n = fib_sequence(*offset);
+    int i = 0;
+
+    if (n == 0) {
+        fib[i] = '0';
+        i++;
+    }
+
+    while (n) {
+        fib[i] = (n % 10) + '0';
+        n /= 10;
+        i++;
+    }
+
+    fib[i] = '\0';
+
+    int start = 0, end = i - 1;
+    while (start < end) {
+        int temp = fib[start];
+        fib[start] = fib[end];
+        fib[end] = temp;
+        start++;
+        end--;
+    }
+
+    copy_to_user(buf, fib, 64);
+
     return (ssize_t) fib_sequence(*offset);
 }
 
