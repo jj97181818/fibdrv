@@ -108,13 +108,23 @@ static ssize_t fib_read(struct file *file,
     return (ssize_t) fib_sequence(*offset);
 }
 
+static ktime_t kt;
 /* write operation is skipped */
 static ssize_t fib_write(struct file *file,
                          const char *buf,
                          size_t size,
                          loff_t *offset)
 {
-    return 1;
+    if (size == 0) {
+        kt = ktime_get();
+        fib_sequence(*offset);
+        kt = ktime_sub(ktime_get(), kt);
+    } else if (size == 1) {
+        kt = ktime_get();
+        fast_doubling(*offset);
+        kt = ktime_sub(ktime_get(), kt);
+    }
+    return ktime_to_ns(kt);
 }
 
 static loff_t fib_device_lseek(struct file *file, loff_t offset, int orig)
