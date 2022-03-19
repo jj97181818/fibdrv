@@ -9,9 +9,8 @@
 
 int main()
 {
-    long long time1, time2;
     char write_buf[] = "testing writing";
-    int offset = 100; /* TODO: try test something bigger than the limit */
+    int offset = 93; /* TODO: try test something bigger than the limit */
 
     int fd = open(FIB_DEV, O_RDWR);
     if (fd < 0) {
@@ -21,10 +20,11 @@ int main()
 
     for (int i = 0; i <= offset; i++) {
         lseek(fd, i, SEEK_SET);
-        time1 = write(fd, write_buf, 0);
-        time2 = write(fd, write_buf, 1);
+        long long time1 = write(fd, write_buf, 0);
+        long long time2 = write(fd, write_buf, 1);
+        long long time3 = write(fd, write_buf, 2);
 
-        printf("%d %lld %lld\n", i, time1, time2);
+        printf("%d %lld %lld %lld\n", i, time1, time2, time3);
     }
 
     close(fd);
