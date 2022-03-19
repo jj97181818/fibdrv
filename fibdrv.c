@@ -27,22 +27,41 @@ static DEFINE_MUTEX(fib_mutex);
 
 static long long fib_sequence(long long k)
 {
-    long long *f = kmalloc((k + 2) * sizeof(long long), GFP_KERNEL);
-
-    f[0] = 0;
-    f[1] = 1;
+    long long a, b;
+    a = 0;
+    b = 1;
 
     for (int i = 2; i <= k; i++) {
-        f[i] = f[i - 1] + f[i - 2];
+        long long c = a + b;
+        a = b;
+        b = c;
     }
-    return f[k];
+    return b;
 }
 
 static long long fast_doubling(long long n)
 {
     long long a = 0, b = 1;
 
-    for (unsigned long long i = 1ULL << 63; i; i >>= 1) {
+    for (unsigned int i = 1U << 31; i; i >>= 1) {
+        long long t1 = a * (2 * b - a);  // 2k
+        long long t2 = a * a + b * b;    // 2k+1
+        if (n & i) {
+            a = t2;
+            b = t1 + t2;
+        } else {
+            a = t1;
+            b = t2;
+        }
+    }
+    return a;
+}
+
+static long long fast_doubling_clz(long long n)
+{
+    long long a = 0, b = 1;
+
+    for (unsigned int i = 1U << (31 - __builtin_clz(n)); i; i >>= 1) {
         long long t1 = a * (2 * b - a);  // 2k
         long long t2 = a * a + b * b;    // 2k+1
         if (n & i) {
@@ -108,6 +127,11 @@ static ssize_t fib_read(struct file *file,
     return (ssize_t) fib_sequence(*offset);
 }
 
+__attribute__((always_inline)) static inline void escape(void *p)
+{
+    __asm__ volatile("" : : "g"(p) : "memory");
+}
+
 static ktime_t kt;
 /* write operation is skipped */
 static ssize_t fib_write(struct file *file,
@@ -115,15 +139,21 @@ static ssize_t fib_write(struct file *file,
                          size_t size,
                          loff_t *offset)
 {
+    long long res = 0;
     if (size == 0) {
         kt = ktime_get();
-        fib_sequence(*offset);
+        res = fib_sequence(*offset);
         kt = ktime_sub(ktime_get(), kt);
     } else if (size == 1) {
         kt = ktime_get();
-        fast_doubling(*offset);
+        res = fast_doubling(*offset);
+        kt = ktime_sub(ktime_get(), kt);
+    } else if (size == 2) {
+        kt = ktime_get();
+        res = fast_doubling_clz(*offset);
         kt = ktime_sub(ktime_get(), kt);
     }
+    escape(&res);
     return ktime_to_ns(kt);
 }
 
