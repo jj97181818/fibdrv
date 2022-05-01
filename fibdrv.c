@@ -18,15 +18,115 @@ MODULE_VERSION("0.1");
 /* MAX_LENGTH is set to 92 because
  * ssize_t can't fit the number > 92
  */
-#define MAX_LENGTH 92
+#define MAX_LENGTH 100
 
 static dev_t fib_dev = 0;
 static struct cdev *fib_cdev;
 static struct class *fib_class;
 static DEFINE_MUTEX(fib_mutex);
 
+typedef struct _BigN {
+    unsigned int *val;
+    unsigned int size;
+    int sign;
+} BigN;
+
+static BigN *BigN_new(unsigned int size)
+{
+    BigN *new = kmalloc(sizeof(BigN), GFP_KERNEL);
+    new->size = size;
+    new->sign = 0;
+    new->val = kmalloc(sizeof(unsigned int) * size, GFP_KERNEL);
+    memset(new->val, 0, sizeof(unsigned int) * size);
+
+    return new;
+}
+
+static void BigN_to_string(char *s, BigN *num)
+{
+    // log10(x) = log2(x) / log2(10) ~= log2(x) / 3.322
+    size_t len = (8 * sizeof(int) * num->size) / 3 + 2 + num->sign;
+    char *p = s;
+
+    memset(s, '0', len - 1);
+    s[len - 1] = '\0';
+
+    for (int i = num->size - 1; i >= 0; i--) {
+        for (unsigned int d = 1U << 31; d; d >>= 1) {
+            int carry = ((d & num->val[i]) > 0);
+            for (int j = len - 2; j >= 0; j--) {
+                s[j] += s[j] - '0' + carry;
+                carry = (s[j] > '9');
+                if (carry)
+                    s[j] -= 10;
+            }
+        }
+    }
+    while (p[0] == '0' && p[1] != '\0') {
+        p++;
+    }
+    if (num->sign)
+        *(--p) = '-';
+    memmove(s, p, strlen(p) + 1);
+}
+
+static BigN *BigN_add(const BigN *a, const BigN *b)
+{
+    unsigned int size = ((a->size > b->size) ? a->size : b->size) + 1;
+    BigN *sum = BigN_new(size);
+
+    unsigned int carry = 0;
+    unsigned long s = 0;
+    for (int i = 0; i < sum->size; i++) {
+        unsigned int tmp1 = (a->size) > i ? a->val[i] : 0;
+        unsigned int tmp2 = (b->size) > i ? b->val[i] : 0;
+        s = (unsigned long) tmp1 + tmp2 + carry;
+
+        sum->val[i] = s & UINT_MAX;
+        carry = 0;
+        if (s > UINT_MAX) {
+            carry = 1;
+        }
+    }
+    if (sum->val[sum->size - 1] == 0) {
+        sum->size -= 1;
+    }
+
+    return sum;
+}
+
+
+static void BigN_free(BigN *num)
+{
+    kfree(num->val);
+    kfree(num);
+}
+
+static BigN *fib_sequence_BigN(long long k)
+{
+    BigN *a = BigN_new(1);  // f(0) = 0
+    BigN *b = BigN_new(1);  // f(1) = 1
+    b->val[0] = 1;
+    BigN *sum;
+
+    if (k == 0)
+        return a;
+
+    for (int i = 2; i <= k; i++) {
+        sum = BigN_add(a, b);  // f[i] = f[i - 1] + f[i - 2]
+        BigN_free(a);
+        a = b;
+        b = sum;
+    }
+    BigN_free(a);
+
+    return b;
+}
+
 static long long fib_sequence(long long k)
 {
+    if (k == 0)
+        return 0;
     long long a, b;
     a = 0;
     b = 1;
@@ -97,33 +197,10 @@ static ssize_t fib_read(struct file *file,
                         loff_t *offset)
 {
     char fib[64];
-    long long n = fast_doubling(*offset);
-    int i = 0;
 
-    if (n == 0) {
-        fib[i] = '0';
-        i++;
-    }
-
-    while (n) {
-        fib[i] = (n % 10) + '0';
-        n /= 10;
-        i++;
-    }
-
-    fib[i] = '\0';
-
-    int start = 0, end = i - 1;
-    while (start < end) {
-        int temp = fib[start];
-        fib[start] = fib[end];
-        fib[end] = temp;
-        start++;
-        end--;
-    }
-
+    BigN *n = fib_sequence_BigN(*offset);
+    BigN_to_string(fib, n);
     copy_to_user(buf, fib, 64);
-
     return (ssize_t) fib_sequence(*offset);
 }
 
@@ -151,6 +228,10 @@ static ssize_t fib_write(struct file *file,
     } else if (size == 2) {
         kt = ktime_get();
         res = fast_doubling_clz(*offset);
+        kt = ktime_sub(ktime_get(), kt);
+    } else if (size == 3) {
+        kt = ktime_get();
+        res = fib_sequence_BigN(*offset);
         kt = ktime_sub(ktime_get(), kt);
     }
     escape(&res);
